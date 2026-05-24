@@ -23,10 +23,12 @@ load_dotenv()
 
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "AgentApprovalRequests")
+UPLOADS_TABLE_NAME = os.getenv("DYNAMODB_UPLOADS_TABLE_NAME", "AgentUploads")
 
 # boto3 resource gives us a simpler dict-style API than the low-level client.
 _dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
 _table = _dynamodb.Table(TABLE_NAME)
+_uploads_table = _dynamodb.Table(UPLOADS_TABLE_NAME)
 
 
 def _now() -> str:
@@ -157,3 +159,63 @@ def ensure_table_exists() -> None:
     )
     # Wait until the new table is ready to accept reads/writes.
     client.get_waiter("table_exists").wait(TableName=TABLE_NAME)
+
+
+# ---- Uploads table ------------------------------------------------------------
+#
+# A separate DynamoDB table for tracking uploaded files. The actual file bytes
+# stay on local disk under uploads/; this table only stores metadata so the UI
+# can list past uploads and the next lecture can drive row processing from it.
+#
+# Schema (string-only, no GSIs):
+#   upload_id            string  (partition key)
+#   original_file_name   string
+#   stored_file_path     string  (path on local disk)
+#   file_type            string  (csv or xlsx)
+#   upload_status        string  (uploaded / processing / processed / failed)
+#   uploaded_at          string  (ISO 8601)
+#   error_message        string
+
+def ensure_uploads_table_exists() -> None:
+    """Create the AgentUploads table if it doesn't exist yet."""
+    client = boto3.client("dynamodb", region_name=AWS_REGION)
+    existing = client.list_tables().get("TableNames", [])
+    if UPLOADS_TABLE_NAME in existing:
+        return
+
+    client.create_table(
+        TableName=UPLOADS_TABLE_NAME,
+        KeySchema=[{"AttributeName": "upload_id", "KeyType": "HASH"}],
+        AttributeDefinitions=[{"AttributeName": "upload_id", "AttributeType": "S"}],
+        BillingMode="PAY_PER_REQUEST",
+    )
+    client.get_waiter("table_exists").wait(TableName=UPLOADS_TABLE_NAME)
+
+
+def create_upload(record: dict) -> dict:
+    """Insert a new upload metadata record and return it."""
+    _uploads_table.put_item(Item=record)
+    return record
+
+
+def get_upload(upload_id: str) -> dict | None:
+    """Fetch one upload record by id, or None if missing."""
+    response = _uploads_table.get_item(Key={"upload_id": upload_id})
+    return response.get("Item")
+
+
+def list_uploads(limit: int = 50) -> list:
+    """Return up to `limit` upload records, newest first."""
+    response = _uploads_table.scan()
+    items = response.get("Items", [])
+    items.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    return items[:limit]
+
+
+def update_upload_status(upload_id: str, status: str, error_message: str = "") -> None:
+    """Update an upload's status (and optionally its error_message)."""
+    _uploads_table.update_item(
+        Key={"upload_id": upload_id},
+        UpdateExpression="SET upload_status = :s, error_message = :e",
+        ExpressionAttributeValues={":s": status, ":e": error_message},
+    )

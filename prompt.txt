@@ -160,3 +160,84 @@ Safety rules:
 
 Keep the code beginner friendly and well commented.
 Do not use advanced frameworks.
+
+
+=============
+source venv/bin/activate
+============
+
+Update the existing human-in-loop-browser-agent project.
+
+Goal:
+Add a file upload utility to the Streamlit UI.
+
+Important:
+This lecture should only upload and store files locally.
+Do not process the file rows yet.
+Do not create approval requests from the file yet.
+That will be done in the next lecture.
+
+Current project context:
+The project already has:
+- app.py as the Streamlit control center
+- llm_service.py for parsing natural language requests
+- dynamodb_service.py for approval request storage
+- browser_agent.py / submitter workflow for approved requests
+- DynamoDB approval workflow already working
+
+New feature:
+In app.py, add a new section:
+"Upload CSV / Excel File"
+
+Requirements:
+
+1. Allow uploads for:
+   - .csv
+   - .xlsx
+
+2. Save uploaded files locally under:
+   uploads/
+
+3. Generate a unique upload_id for each uploaded file.
+
+4. Save upload metadata locally in:
+   uploads/upload_metadata.json
+
+5. Each metadata record should include:
+   - upload_id
+   - original_file_name
+   - stored_file_path
+   - file_type
+   - upload_status: uploaded / processing / processed / failed
+   - uploaded_at
+   - error_message
+
+6. Show uploaded files in Streamlit with:
+   - upload_id
+   - file name
+   - status
+   - uploaded_at
+
+7. Show a small preview of the uploaded file using pandas:
+   - first 5 rows only
+
+8. Validate basic file type only.
+   Do not validate row schema yet.
+   Do not create approval requests yet.
+
+9. Add a clear note in the UI:
+   "File uploaded successfully. Processing will be added in the next lecture."
+
+10. Keep the existing natural language approval workflow unchanged.
+
+11. Keep implementation beginner friendly and well commented.
+
+12. Add helper functions if useful:
+   - save_uploaded_file()
+   - load_upload_metadata()
+   - save_upload_metadata()
+   - preview_uploaded_file()
+
+13. Update requirements.txt with:
+   pandas
+   openpyxl

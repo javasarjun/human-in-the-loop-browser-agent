@@ -22,6 +22,7 @@ import streamlit as st
 import dynamodb_service
 import llm_service
 import submitter_service
+import upload_service
 
 # ---- Page setup ----------------------------------------------------------------
 
@@ -31,11 +32,12 @@ st.caption(
     "Natural language -> LLM-parsed pizza order -> your approval -> Playwright submits the form."
 )
 
-# Make sure the DynamoDB table exists. Safe to call on every run.
+# Make sure both DynamoDB tables exist. Safe to call on every run.
 try:
     dynamodb_service.ensure_table_exists()
+    dynamodb_service.ensure_uploads_table_exists()
 except Exception as exc:
-    st.warning(f"Could not verify DynamoDB table: {exc}")
+    st.warning(f"Could not verify DynamoDB tables: {exc}")
 
 DEFAULT_REQUEST = (
     "Can you order a small vegetarian pizza with onion, mushroom for Arjun Vaid around 8:30 PM? "
@@ -146,7 +148,83 @@ for req in pending:
             except Exception as exc:
                 st.error(f"Could not reject: {exc}")
 
-# ---- Section 3: Recent History -------------------------------------------------
+# ---- Section 3: Upload CSV / Excel File ---------------------------------------
+
+st.header("Upload CSV / Excel File")
+st.caption(
+    "Upload a .csv or .xlsx file. For now we just store it locally and show a preview. "
+    "Row processing and approval requests will be added in the next lecture."
+)
+
+uploaded_file = st.file_uploader(
+    "Choose a file to upload",
+    type=["csv", "xlsx"],
+    accept_multiple_files=False,
+    key="file_uploader",
+)
+
+if uploaded_file is not None:
+    # Only save when the user clicks the button - otherwise Streamlit would
+    # re-save the same file on every rerun (e.g. each time another button is clicked).
+    if st.button("Save uploaded file", key="save_upload_btn"):
+        record = upload_service.save_uploaded_file(uploaded_file)
+        if record["upload_status"] == "uploaded":
+            st.success(
+                "File uploaded successfully. "
+                "Processing will be added in the next lecture."
+            )
+            st.json(record)
+        else:
+            st.error(f"Upload failed: {record.get('error_message', 'Unknown error')}")
+
+# Show the full list of previously uploaded files.
+st.subheader("Uploaded Files")
+
+upload_records = upload_service.load_upload_metadata()
+if not upload_records:
+    st.caption("No files uploaded yet.")
+else:
+    # Newest first.
+    upload_records_sorted = sorted(
+        upload_records, key=lambda r: r.get("uploaded_at", ""), reverse=True
+    )
+
+    # Compact table view of the columns the lecture asked for.
+    table_rows = [
+        {
+            "upload_id": r.get("upload_id", "")[:8] + "...",
+            "file_name": r.get("original_file_name", ""),
+            "status": r.get("upload_status", ""),
+            "uploaded_at": r.get("uploaded_at", ""),
+        }
+        for r in upload_records_sorted
+    ]
+    st.dataframe(table_rows, use_container_width=True)
+
+    # Let the user pick one upload to preview.
+    successful_uploads = [r for r in upload_records_sorted if r.get("upload_status") == "uploaded"]
+    if successful_uploads:
+        options = {
+            f"{r['original_file_name']}  ({r['upload_id'][:8]})": r for r in successful_uploads
+        }
+        choice = st.selectbox(
+            "Preview an uploaded file (first 5 rows)",
+            options=list(options.keys()),
+            key="preview_select",
+        )
+        if choice:
+            selected = options[choice]
+            try:
+                preview_df = upload_service.preview_uploaded_file(
+                    selected["stored_file_path"],
+                    selected["file_type"],
+                    n=5,
+                )
+                st.dataframe(preview_df, use_container_width=True)
+            except Exception as exc:
+                st.error(f"Could not preview file: {exc}")
+
+# ---- Section 4: Recent History -------------------------------------------------
 
 st.header("Recent Requests (all statuses)")
 
