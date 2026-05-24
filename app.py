@@ -1,0 +1,177 @@
+"""
+app.py
+
+The Streamlit control center for the human-in-the-loop browser agent.
+
+Flow:
+  1. User types a natural language pizza order.
+  2. We call the LLM to extract structured form fields.
+  3. We save those fields as a 'pending' approval request in DynamoDB.
+  4. The pending list shows each request with Approve / Reject buttons.
+  5. On Approve, we call the submitter, which drives Playwright and verifies the result.
+  6. The UI re-reads DynamoDB and shows the new status.
+
+Run with:
+  streamlit run app.py
+"""
+
+import json
+
+import streamlit as st
+
+import dynamodb_service
+import llm_service
+import submitter_service
+
+# ---- Page setup ----------------------------------------------------------------
+
+st.set_page_config(page_title="Human-in-the-Loop Browser Agent", layout="wide")
+st.title("Human-in-the-Loop Browser Agent")
+st.caption(
+    "Natural language -> LLM-parsed pizza order -> your approval -> Playwright submits the form."
+)
+
+# Make sure the DynamoDB table exists. Safe to call on every run.
+try:
+    dynamodb_service.ensure_table_exists()
+except Exception as exc:
+    st.warning(f"Could not verify DynamoDB table: {exc}")
+
+DEFAULT_REQUEST = (
+    "Can you order a small vegetarian pizza with onion, mushroom for Arjun Vaid around 8:30 PM? "
+    "Use email javasarjun@gmail.com and phone 4694268163. "
+    "Please add a note asking for extra cheese, but don't submit until I approve."
+)
+
+# ---- Section 1: Create Approval Request ----------------------------------------
+
+st.header("Create Approval Request")
+
+natural_request = st.text_area(
+    "Natural Language Request",
+    value=DEFAULT_REQUEST,
+    height=160,
+    help="Describe the pizza order in plain English. The LLM will extract the form fields.",
+)
+
+if st.button("Create Approval Request", type="primary"):
+    if not natural_request.strip():
+        st.error("Please enter a request before creating one.")
+    else:
+        with st.spinner("Asking the LLM to extract the form fields..."):
+            try:
+                parsed = llm_service.parse_request(natural_request)
+            except Exception as exc:
+                st.error(f"LLM parsing failed: {exc}")
+                parsed = None
+
+        if parsed is not None:
+            payload = parsed["payload"]
+            missing = parsed["missing_fields"]
+            review_summary = parsed["review_summary"]
+
+            st.subheader("Extracted Payload")
+            st.json(payload)
+
+            if missing:
+                st.error(
+                    "Some fields could not be extracted. Please update the request and try again."
+                )
+                st.write("Missing fields:", ", ".join(missing))
+            else:
+                try:
+                    item = dynamodb_service.create_request(
+                        task_type="pizza_order",
+                        original_request=natural_request,
+                        payload=payload,
+                        review_summary=review_summary,
+                    )
+                    st.success(
+                        f"Saved as pending approval request: {item['request_id']}"
+                    )
+                except Exception as exc:
+                    st.error(f"Could not save to DynamoDB: {exc}")
+
+# ---- Section 2: Pending Approvals ---------------------------------------------
+
+st.header("Pending Approvals")
+
+try:
+    pending = dynamodb_service.list_pending_requests()
+except Exception as exc:
+    st.error(f"Could not load pending requests from DynamoDB: {exc}")
+    pending = []
+
+if not pending:
+    st.info("No pending approval requests. Create one above to get started.")
+
+for req in pending:
+    request_id = req["request_id"]
+    with st.container(border=True):
+        st.markdown(f"**Request ID:** `{request_id}`")
+        st.markdown(f"**Summary:** {req.get('review_summary', '')}")
+        st.markdown(f"**Created:** {req.get('created_at', '')}")
+
+        with st.expander("Original natural language request"):
+            st.write(req.get("original_request", ""))
+
+        with st.expander("Parsed payload"):
+            st.json(req.get("payload", {}))
+
+        col_approve, col_reject = st.columns(2)
+
+        # Approve button: mark approved, then run the submitter inline.
+        if col_approve.button("Approve & Submit", key=f"approve-{request_id}"):
+            try:
+                dynamodb_service.approve_request(request_id)
+            except Exception as exc:
+                st.error(f"Could not mark approved: {exc}")
+            else:
+                with st.spinner("Running browser agent and verifying submission..."):
+                    result = submitter_service.submit_approved_request(request_id)
+
+                if result.get("success"):
+                    st.success("Submitted and verified.")
+                else:
+                    st.error("Submission failed verification.")
+                st.json(result)
+                st.rerun()
+
+        # Reject button: just mark rejected and refresh.
+        if col_reject.button("Reject", key=f"reject-{request_id}"):
+            try:
+                dynamodb_service.reject_request(request_id)
+                st.success("Request rejected.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not reject: {exc}")
+
+# ---- Section 3: Recent History -------------------------------------------------
+
+st.header("Recent Requests (all statuses)")
+
+try:
+    history = dynamodb_service.list_all_requests(limit=25)
+except Exception as exc:
+    st.error(f"Could not load history: {exc}")
+    history = []
+
+# Build a small table-friendly view.
+if history:
+    rows = []
+    for r in history:
+        rows.append(
+            {
+                "request_id": r.get("request_id", "")[:8] + "...",
+                "status": r.get("status", ""),
+                "summary": r.get("review_summary", ""),
+                "created_at": r.get("created_at", ""),
+                "updated_at": r.get("updated_at", ""),
+            }
+        )
+    st.dataframe(rows, use_container_width=True)
+
+    with st.expander("Raw recent items"):
+        st.code(json.dumps(history, indent=2, default=str), language="json")
+else:
+    st.caption("No requests yet.")

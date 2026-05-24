@@ -1,0 +1,162 @@
+Create a new Python project called human-in-loop-browser-agent.
+
+Goal:
+Build a human-in-the-loop browser agent system using Playwright, OpenAI, DynamoDB, and Streamlit.
+
+Architecture:
+- Streamlit is the main control center
+- User enters a natural language request in Streamlit
+- LLM extracts structured form data from the natural language request
+- DynamoDB stores approval requests and workflow status
+- Streamlit shows pending approval requests and lets the user approve or reject
+- When the user clicks Approve, Streamlit invokes the submitter workflow directly
+- Playwright submits the browser form only after approval
+- After submission, the system verifies that the form was actually submitted before updating status
+
+Project structure:
+
+app.py
+- Main Streamlit app
+- Lets user enter a natural language request
+- Creates approval requests
+- Shows pending approval requests
+- Lets user approve or reject
+- On approval, invokes submitter workflow directly
+- Shows submission verification result
+
+llm_service.py
+- Uses OpenAI to parse the natural language request into structured pizza order form data
+
+dynamodb_service.py
+- Handles DynamoDB operations:
+  create request,
+  list pending requests,
+  approve request,
+  reject request,
+  mark submitted,
+  mark failed
+
+submitter_service.py
+- Contains function to submit one approved request
+- Calls browser_agent.py
+- Updates DynamoDB after verification
+
+browser_agent.py
+- Uses Playwright to open and submit the demo form
+- Verifies submission after clicking submit
+
+main.py
+- Optional CLI testing only
+
+requirements.txt
+README.md
+
+Environment variables:
+Load from .env:
+- OPENAI_API_KEY
+- AWS_REGION
+- DYNAMODB_TABLE_NAME
+
+DynamoDB table:
+Table name: AgentApprovalRequests
+Partition key: request_id
+
+Approval request attributes:
+- request_id
+- status: pending / approved / rejected / submitted / failed
+- task_type
+- original_request
+- payload
+- review_summary
+- created_at
+- updated_at
+- approved_at
+- submitted_at
+- error_message
+- submission_result
+
+Demo website:
+Use https://httpbin.org/forms/post as the safe demo form.
+
+Important:
+The httpbin form is a simple pizza order form.
+
+In Streamlit, add a section called:
+Create Approval Request
+
+Add a large text_area called:
+Natural Language Request
+
+Default request:
+"Can you order a small vegetarian pizza with onion, mushroom for Arjun Vaid around 8:30 PM? Use email javasarjun@gmail.com and phone 4694268163. Please add a note asking for extra cheese, but don’t submit until I approve."
+
+When the user clicks "Create Approval Request":
+- send the natural language request to the LLM parser
+- extract structured form fields:
+  - custname
+  - custemail
+  - custtel
+  - size
+  - topping
+  - delivery
+  - comments
+- save the parsed payload as a pending approval request in DynamoDB
+- show the extracted payload in the UI
+- refresh the pending approval list
+
+The LLM parser should handle natural variations such as:
+- "8:30 PM" and convert it to "20:30"
+- "extra cheese" and map it to comments
+- "small vegetarian pizza" and extract size = small, topping = onion, mushroom
+
+If any required field is missing, show a clear message in Streamlit:
+"Some fields could not be extracted. Please update the request and try again."
+
+Do not use separate input fields for name, email, phone, size, topping, delivery, or comments as the primary workflow.
+The goal is to demonstrate LLM-based extraction from plain English.
+
+browser_agent.py should:
+- open https://httpbin.org/forms/post
+- fill custname
+- fill custtel
+- fill custemail
+- select pizza size
+- select topping
+- fill delivery time
+- fill comments
+- submit only after approval
+
+Submission verification:
+- after submit, wait for https://httpbin.org/post response
+- capture the final URL
+- capture page text
+- verify submitted fields appear in the response:
+  custname, custemail, custtel, size, topping, delivery, comments
+- return:
+  success
+  final_url
+  submitted_form_data
+  verification_message
+  submitted_at
+
+DynamoDB statuses:
+- pending
+- approved
+- rejected
+- submitted
+- failed
+
+Only mark status as submitted if verification succeeds.
+
+If verification fails, mark status as failed and store error_message.
+
+Safety rules:
+- Do not submit automatically.
+- Do not log in.
+- Do not upload files.
+- Do not use real personal data beyond demo values.
+- Do not bypass CAPTCHA or bot protection.
+- This is a safe demo workflow only.
+
+Keep the code beginner friendly and well commented.
+Do not use advanced frameworks.
