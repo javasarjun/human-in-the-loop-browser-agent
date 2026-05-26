@@ -241,3 +241,71 @@ Requirements:
 13. Update requirements.txt with:
    pandas
    openpyxl
+
+
+
+
+=============
+
+
+Goal:
+Process uploaded CSV / Excel files and create DynamoDB approval requests from each valid row.
+
+New requirements:
+
+1. Add a processing section in Streamlit:
+   "Process Uploaded Files"
+
+2. Show uploaded files with status:
+   - uploaded
+   - processing
+   - processed
+   - failed
+
+3. For files with status uploaded, provide a button:
+   "Process File"
+
+4. When Process File is clicked:
+   - update upload_status to processing
+   - read the file using pandas
+   - validate required columns
+   - loop through each row
+   - create one DynamoDB approval request per valid row
+   - include batch metadata
+
+
+7. Add batch tracking:
+   - batch_id should be unique per uploaded file
+   - each request should include row_number
+
+8. Add basic row validation:
+   - skip rows missing required values
+   - collect row-level errors
+   - show errors in Streamlit
+
+9. After processing:
+   - update upload_status to processed if requests were created successfully
+   - update upload_status to failed if file validation fails completely
+   - store error_message if failed
+
+10. Show processing summary:
+   - total rows
+   - requests created
+   - rows skipped
+   - errors
+
+11. Avoid duplicate processing:
+   - if file status is already processed, do not process it again
+   - show a warning instead
+
+12. Keep the existing natural language request workflow unchanged.
+
+13. Keep the existing pending approval dashboard unchanged, except it should now show requests created from uploaded files too.
+
+
+
+15. Keep the implementation beginner friendly and well commented.
+
+Do not add S3, SQS, or Lambda yet.
+This is still local file processing.
+Cloud processing will be covered later.

@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/bin/python -m py_compile app.py llm_service.py dynamodb_service.py browser_agent.py submitter_service.py main.py upload_service.py processing_service.py)"
+    ]
+  }
+}

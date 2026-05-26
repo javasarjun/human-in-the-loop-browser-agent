@@ -36,9 +36,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def create_request(task_type: str, original_request: str, payload: dict, review_summary: str) -> dict:
+def create_request(
+    task_type: str,
+    original_request: str,
+    payload: dict,
+    review_summary: str,
+    extra_attributes: dict | None = None,
+) -> dict:
     """
     Insert a new approval request with status='pending' and return the full item.
+
+    `extra_attributes` lets callers attach optional top-level fields like
+    upload_id / batch_id / row_number for requests created from uploaded files.
+    Reserved attribute names (request_id, status, created_at, ...) cannot be
+    overwritten - they are always set here.
     """
     item = {
         "request_id": str(uuid.uuid4()),
@@ -50,6 +61,10 @@ def create_request(task_type: str, original_request: str, payload: dict, review_
         "created_at": _now(),
         "updated_at": _now(),
     }
+    if extra_attributes:
+        for key, value in extra_attributes.items():
+            if key not in item:
+                item[key] = value
     _table.put_item(Item=item)
     return item
 

@@ -21,6 +21,7 @@ import streamlit as st
 
 import dynamodb_service
 import llm_service
+import processing_service
 import submitter_service
 import upload_service
 
@@ -224,7 +225,74 @@ else:
             except Exception as exc:
                 st.error(f"Could not preview file: {exc}")
 
-# ---- Section 4: Recent History -------------------------------------------------
+# ---- Section 4: Process Uploaded Files ----------------------------------------
+
+st.header("Process Uploaded Files")
+st.caption(
+    "For each uploaded file, validate its rows and create one pending approval "
+    "request per valid row. Required columns: "
+    f"{', '.join(processing_service.REQUIRED_COLUMNS)}. "
+    "Optional columns: topping, comments."
+)
+
+# Re-read upload metadata so this section reflects the latest statuses.
+uploads_for_processing = upload_service.load_upload_metadata()
+
+if not uploads_for_processing:
+    st.caption("No uploaded files yet. Upload one in the section above.")
+
+for record in uploads_for_processing:
+    upload_id = record["upload_id"]
+    status = record.get("upload_status", "")
+    file_name = record.get("original_file_name", "")
+
+    with st.container(border=True):
+        cols = st.columns([3, 1, 1, 2])
+        cols[0].markdown(f"**{file_name}**  \n`{upload_id}`")
+        cols[1].markdown(f"**Status:** `{status}`")
+        cols[2].markdown(f"**Type:** {record.get('file_type', '')}")
+        cols[3].markdown(f"**Uploaded:** {record.get('uploaded_at', '')}")
+
+        if status == "uploaded":
+            if st.button("Process File", key=f"process-{upload_id}"):
+                with st.spinner(f"Processing {file_name}..."):
+                    result = processing_service.process_upload(record)
+
+                if result.get("already_processed"):
+                    st.warning(
+                        f"This file is already in status '{result['final_status']}'. "
+                        "Skipping to avoid duplicate processing."
+                    )
+                elif result["final_status"] == "failed":
+                    st.error(
+                        f"File processing failed: {result.get('file_error', 'unknown error')}"
+                    )
+                else:
+                    st.success(
+                        f"Processed {file_name}. "
+                        f"batch_id = {result['batch_id']}"
+                    )
+
+                # Always show the summary so the user can see what happened.
+                summary_cols = st.columns(3)
+                summary_cols[0].metric("Total rows", result["total_rows"])
+                summary_cols[1].metric("Requests created", result["requests_created"])
+                summary_cols[2].metric("Rows skipped", result["rows_skipped"])
+
+                if result["errors"]:
+                    st.warning(f"{len(result['errors'])} row(s) had errors:")
+                    st.dataframe(result["errors"], use_container_width=True)
+
+                st.rerun()
+
+        elif status == "processed":
+            st.info("Already processed. Re-processing is disabled.")
+        elif status == "processing":
+            st.info("Currently processing (or interrupted mid-run).")
+        elif status == "failed":
+            st.error(f"Previous attempt failed: {record.get('error_message', '')}")
+
+# ---- Section 5: Recent History -------------------------------------------------
 
 st.header("Recent Requests (all statuses)")
 
