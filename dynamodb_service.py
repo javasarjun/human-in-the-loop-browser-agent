@@ -80,13 +80,22 @@ def list_pending_requests() -> list:
     Return all requests whose status is 'pending'.
     Uses scan with a filter - fine for a demo, would use a GSI in production.
     """
+    return _list_by_status("pending")
+
+
+def list_approved_requests() -> list:
+    """Return all requests whose status is 'approved'."""
+    return _list_by_status("approved")
+
+
+def _list_by_status(status_value: str) -> list:
+    """Scan and filter the approval requests table by a single status value."""
     response = _table.scan(
-        FilterExpression="#s = :pending",
+        FilterExpression="#s = :v",
         ExpressionAttributeNames={"#s": "status"},
-        ExpressionAttributeValues={":pending": "pending"},
+        ExpressionAttributeValues={":v": status_value},
     )
     items = response.get("Items", [])
-    # Sort newest first so the UI shows the most recent requests on top.
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return items
 

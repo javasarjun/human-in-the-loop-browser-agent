@@ -1,50 +1,39 @@
 """
 upload_service.py
 
-Local file upload helpers for the Streamlit app.
+Uploads CSV files from the Streamlit UI to the S3 upload bucket.
 
-This lecture covers uploading and storing files. The actual file bytes are
-written to the local `uploads/` directory (so a future lecture can read them
-row-by-row), and the *metadata* about each upload lives in DynamoDB in a
-dedicated `AgentUploads` table.
+After the upload, the deployed backend handles everything else:
+  S3 ObjectCreated -> SQS -> Lambda -> DynamoDB approval requests.
 
-Row processing and creating approval requests from rows is intentionally NOT
-done here - that's for a later lecture.
+This module deliberately does NOT:
+  - send SQS messages (S3's bucket notification does that automatically)
+  - write metadata to DynamoDB
+  - keep a local copy of the file
 """
 
 import os
-import uuid
+import re
 from datetime import datetime, timezone
 
-import pandas as pd
+import boto3
+from dotenv import load_dotenv
 
-import dynamodb_service
+load_dotenv()
 
-# ---- Constants ---------------------------------------------------------------
+AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
+UPLOAD_BUCKET_NAME = os.getenv("UPLOAD_BUCKET_NAME", "")
 
-UPLOADS_DIR = "uploads"
+# The deployed backend only processes CSV; restrict the UI to match.
+ALLOWED_EXTENSIONS = {".csv"}
 
-# Map of allowed file extensions -> a friendly file_type label.
-ALLOWED_EXTENSIONS = {
-    ".csv": "csv",
-    ".xlsx": "xlsx",
-}
+_s3 = boto3.client("s3", region_name=AWS_REGION)
 
 
 # ---- Helpers -----------------------------------------------------------------
 
-def _ensure_uploads_dir() -> None:
-    """Make sure the uploads/ directory exists."""
-    os.makedirs(UPLOADS_DIR, exist_ok=True)
-
-
-def _now() -> str:
-    """Return current UTC time as an ISO 8601 string."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _extension_of(filename: str) -> str:
-    """Return the lowercased extension of a filename, including the dot."""
+    """Return the lowercased extension of `filename`, including the dot."""
     return os.path.splitext(filename)[1].lower()
 
 
@@ -53,111 +42,111 @@ def is_allowed_file(filename: str) -> bool:
     return _extension_of(filename) in ALLOWED_EXTENSIONS
 
 
-# ---- Metadata (DynamoDB-backed) ----------------------------------------------
-
-def load_upload_metadata() -> list:
+def _safe_basename(filename: str) -> str:
     """
-    Return all upload metadata records from DynamoDB, newest first.
-    Returns an empty list if the table is empty or unreachable.
+    Strip directory parts and replace anything that's not alnum/dot/dash/_ with
+    an underscore. Keeps S3 keys clean and avoids surprises with weird names.
     """
-    try:
-        return dynamodb_service.list_uploads(limit=200)
-    except Exception:
-        # If DynamoDB is unreachable, don't crash the UI; show no uploads.
-        return []
+    base = os.path.basename(filename)
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", base)
 
 
-# ---- File save ---------------------------------------------------------------
+def _generate_s3_key(original_filename: str) -> str:
+    """Build an S3 key like uploads/20260525-203045-original_name.csv."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"uploads/{timestamp}-{_safe_basename(original_filename)}"
+
+
+# ---- Public API --------------------------------------------------------------
 
 def save_uploaded_file(uploaded_file) -> dict:
     """
-    Save a Streamlit UploadedFile to disk and insert a metadata record into
-    the AgentUploads DynamoDB table.
+    Upload a Streamlit UploadedFile to S3.
 
     `uploaded_file` is the object returned by st.file_uploader().
 
-    Returns the new metadata record. If the file type is not allowed or the
-    write fails, the record's `upload_status` will be 'failed' and no bytes
-    are written to disk.
+    Returns a dict shaped like:
+      {
+        "success": bool,
+        "original_file_name": str,
+        "bucket": str,                # only if success
+        "s3_key": str,                # only if success
+        "uploaded_at": str,           # ISO 8601, only if success
+        "error_message": str,         # only if not success
+      }
     """
-    _ensure_uploads_dir()
-
     original_name = uploaded_file.name
     extension = _extension_of(original_name)
-    upload_id = str(uuid.uuid4())
 
-    # Basic file-type validation (extension only - we don't sniff content yet).
     if extension not in ALLOWED_EXTENSIONS:
-        record = {
-            "upload_id": upload_id,
+        return {
+            "success": False,
             "original_file_name": original_name,
-            "stored_file_path": "",
-            "file_type": extension.lstrip(".") or "unknown",
-            "upload_status": "failed",
-            "uploaded_at": _now(),
-            "error_message": f"Unsupported file extension: {extension!r}. Allowed: .csv, .xlsx",
+            "error_message": (
+                f"Unsupported file extension: {extension!r}. Only .csv is allowed."
+            ),
         }
-        _persist(record)
-        return record
 
-    # Store the file with a unique name to avoid collisions, but keep the
-    # original name in metadata so the UI can show something friendly.
-    stored_filename = f"{upload_id}{extension}"
-    stored_path = os.path.join(UPLOADS_DIR, stored_filename)
+    if not UPLOAD_BUCKET_NAME:
+        return {
+            "success": False,
+            "original_file_name": original_name,
+            "error_message": (
+                "UPLOAD_BUCKET_NAME is not set. Deploy the backend (see backend/README.md) "
+                "and copy the bucket name into the root .env file."
+            ),
+        }
+
+    s3_key = _generate_s3_key(original_name)
 
     try:
-        # Streamlit's UploadedFile is a BytesIO-like object. .getbuffer() is
-        # the standard way to write its contents to disk.
-        with open(stored_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        # Make sure we start from the beginning of the buffer; st.file_uploader
+        # may have advanced the position if anything else read from it.
+        uploaded_file.seek(0)
+        _s3.upload_fileobj(
+            Fileobj=uploaded_file,
+            Bucket=UPLOAD_BUCKET_NAME,
+            Key=s3_key,
+            ExtraArgs={"ContentType": "text/csv"},
+        )
     except Exception as exc:
-        record = {
-            "upload_id": upload_id,
+        return {
+            "success": False,
             "original_file_name": original_name,
-            "stored_file_path": "",
-            "file_type": ALLOWED_EXTENSIONS[extension],
-            "upload_status": "failed",
-            "uploaded_at": _now(),
-            "error_message": f"Could not write file to disk: {exc}",
+            "error_message": f"S3 upload failed: {exc}",
         }
-        _persist(record)
-        return record
 
-    record = {
-        "upload_id": upload_id,
+    return {
+        "success": True,
         "original_file_name": original_name,
-        "stored_file_path": stored_path,
-        "file_type": ALLOWED_EXTENSIONS[extension],
-        "upload_status": "uploaded",
-        "uploaded_at": _now(),
-        "error_message": "",
+        "bucket": UPLOAD_BUCKET_NAME,
+        "s3_key": s3_key,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
     }
-    _persist(record)
-    return record
 
 
-def _persist(record: dict) -> None:
-    """Insert the metadata record into DynamoDB."""
-    dynamodb_service.create_upload(record)
-
-
-# ---- Preview -----------------------------------------------------------------
-
-def preview_uploaded_file(stored_file_path: str, file_type: str, n: int = 5) -> pd.DataFrame:
+def list_recent_uploads(limit: int = 25) -> list[dict]:
     """
-    Load the first `n` rows of an uploaded file as a pandas DataFrame.
+    List the most recent objects under uploads/ in the S3 bucket, newest first.
 
-    Supports .csv and .xlsx (which is what we allow on upload).
-    Raises ValueError for unsupported types so the caller can show a friendly
-    error in the UI.
+    Returns an empty list if the bucket is unset or unreachable. This is best
+    effort - we only use it for a nice "recent uploads" panel in the UI.
     """
-    if not stored_file_path or not os.path.exists(stored_file_path):
-        raise FileNotFoundError(f"File not found on disk: {stored_file_path!r}")
+    if not UPLOAD_BUCKET_NAME:
+        return []
 
-    if file_type == "csv":
-        return pd.read_csv(stored_file_path, nrows=n)
-    if file_type == "xlsx":
-        # openpyxl is the engine pandas uses for .xlsx files.
-        return pd.read_excel(stored_file_path, engine="openpyxl", nrows=n)
+    try:
+        response = _s3.list_objects_v2(Bucket=UPLOAD_BUCKET_NAME, Prefix="uploads/")
+    except Exception:
+        return []
 
-    raise ValueError(f"Unsupported file_type for preview: {file_type!r}")
+    contents = response.get("Contents", []) or []
+    contents.sort(key=lambda obj: obj.get("LastModified"), reverse=True)
+    return [
+        {
+            "s3_key": obj["Key"],
+            "size_bytes": obj.get("Size", 0),
+            "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else "",
+        }
+        for obj in contents[:limit]
+    ]

@@ -1,0 +1,312 @@
+{
+  "/Users/arjunvaid/human-in-loop-browser-agent/backend/serverless.yml": {
+    "versionFramework": "4.36.1",
+    "servicePath": "/Users/arjunvaid/human-in-loop-browser-agent/backend/serverless.yml",
+    "serviceConfigFileName": "serverless.yml",
+    "service": {
+      "service": "human-in-loop-browser-agent-backend",
+      "provider": {
+        "name": "aws",
+        "runtime": "python3.12",
+        "region": "us-east-1",
+        "stage": "dev",
+        "environment": {
+          "APPROVAL_TABLE_NAME": "human-in-loop-browser-agent-backend-dev-approval-requests",
+          "UPLOAD_BUCKET_NAME": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+        },
+        "iam": {
+          "role": {
+            "statements": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:GetObject"
+                ],
+                "Resource": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads/*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:PutItem"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "ApprovalRequestsTable",
+                    "Arn"
+                  ]
+                }
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sqs:ReceiveMessage",
+                  "sqs:DeleteMessage",
+                  "sqs:GetQueueAttributes"
+                ],
+                "Resource": {
+                  "Fn::GetAtt": [
+                    "UploadQueue",
+                    "Arn"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "versionFunctions": true
+      },
+      "package": {
+        "patterns": [
+          "!**/__pycache__/**",
+          "!**/.pytest_cache/**",
+          "!.venv/**",
+          "!venv/**",
+          "!node_modules/**",
+          "!README.md",
+          "lambda_handler.py",
+          "src/**"
+        ],
+        "artifactsS3KeyDirname": "serverless/human-in-loop-browser-agent-backend/dev/code-artifacts"
+      },
+      "functions": {
+        "processUpload": {
+          "handler": "lambda_handler.process_upload",
+          "timeout": 60,
+          "memorySize": 256,
+          "events": [
+            {
+              "sqs": {
+                "arn": {
+                  "Fn::GetAtt": [
+                    "UploadQueue",
+                    "Arn"
+                  ]
+                },
+                "batchSize": 1
+              }
+            }
+          ],
+          "name": "human-in-loop-browser-agent-backend-dev-processUpload"
+        }
+      },
+      "resources": {
+        "Resources": {
+          "ApprovalRequestsTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+              "TableName": "human-in-loop-browser-agent-backend-dev-approval-requests",
+              "BillingMode": "PAY_PER_REQUEST",
+              "AttributeDefinitions": [
+                {
+                  "AttributeName": "request_id",
+                  "AttributeType": "S"
+                }
+              ],
+              "KeySchema": [
+                {
+                  "AttributeName": "request_id",
+                  "KeyType": "HASH"
+                }
+              ]
+            }
+          },
+          "UploadQueue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+              "QueueName": "human-in-loop-browser-agent-backend-dev-uploads",
+              "VisibilityTimeout": 90
+            }
+          },
+          "UploadQueuePolicy": {
+            "Type": "AWS::SQS::QueuePolicy",
+            "Properties": {
+              "Queues": [
+                {
+                  "Ref": "UploadQueue"
+                }
+              ],
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Sid": "AllowS3SendMessage",
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": "s3.amazonaws.com"
+                    },
+                    "Action": "sqs:SendMessage",
+                    "Resource": {
+                      "Fn::GetAtt": [
+                        "UploadQueue",
+                        "Arn"
+                      ]
+                    },
+                    "Condition": {
+                      "ArnLike": {
+                        "aws:SourceArn": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "UploadBucket": {
+            "Type": "AWS::S3::Bucket",
+            "DependsOn": [
+              "UploadQueuePolicy"
+            ],
+            "Properties": {
+              "BucketName": "human-in-loop-browser-agent-backend-dev-063899249535-uploads",
+              "NotificationConfiguration": {
+                "QueueConfigurations": [
+                  {
+                    "Event": "s3:ObjectCreated:*",
+                    "Queue": {
+                      "Fn::GetAtt": [
+                        "UploadQueue",
+                        "Arn"
+                      ]
+                    },
+                    "Filter": {
+                      "S3Key": {
+                        "Rules": [
+                          {
+                            "Name": "prefix",
+                            "Value": "uploads/"
+                          },
+                          {
+                            "Name": "suffix",
+                            "Value": ".csv"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Outputs": {
+          "ApprovalRequestsTableName": {
+            "Description": "DynamoDB table for approval requests (copy into root .env)",
+            "Value": "human-in-loop-browser-agent-backend-dev-approval-requests"
+          },
+          "UploadBucketName": {
+            "Description": "S3 bucket for CSV uploads (copy into root .env)",
+            "Value": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+          },
+          "UploadQueueUrl": {
+            "Description": "SQS queue URL",
+            "Value": {
+              "Ref": "UploadQueue"
+            }
+          }
+        }
+      }
+    },
+    "provider": {
+      "name": "aws",
+      "runtime": "python3.12",
+      "region": "us-east-1",
+      "stage": "dev",
+      "environment": {
+        "APPROVAL_TABLE_NAME": "human-in-loop-browser-agent-backend-dev-approval-requests",
+        "UPLOAD_BUCKET_NAME": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+      },
+      "iam": {
+        "role": {
+          "statements": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject"
+              ],
+              "Resource": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:PutItem"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ApprovalRequestsTable",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "UploadQueue",
+                  "Arn"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "versionFunctions": true
+    },
+    "dashboard": {
+      "isEnabledForService": false,
+      "requiredAuthentication": false,
+      "orgFeaturesInUse": null,
+      "orgObservabilityIntegrations": null,
+      "serviceAppId": null,
+      "serviceProvider": null,
+      "instanceParameters": null
+    },
+    "serviceRawFile": "# serverless.yml\n#\n# Deploys the cloud half of the human-in-the-loop browser agent:\n#   - DynamoDB table for approval requests\n#   - S3 bucket for CSV uploads\n#   - SQS queue that receives S3 ObjectCreated notifications\n#   - Lambda function (processUpload) triggered by SQS\n#\n# Flow:\n#   Streamlit upload -> S3 (uploads/*.csv) -> SQS -> Lambda\n#     -> reads CSV from S3 -> writes one DynamoDB approval request per valid row\n#\n# About the S3 -> SQS notification \"circular dependency\":\n#   The S3 bucket's NotificationConfiguration references the SQS queue, and the\n#   SQS queue policy needs to reference the bucket's ARN to allow it to send\n#   messages. CloudFormation refuses to deploy if both reference each other via\n#   logical IDs (a true cycle).\n#\n#   The clean fix is to NOT reference the bucket as a CloudFormation resource\n#   inside the queue policy - instead we build the bucket ARN as a STRING from\n#   the same deterministic name we use to create the bucket. The bucket then\n#   uses DependsOn to make sure the queue policy is created before it is, so by\n#   the time S3 publishes its first event the queue already accepts it.\n\nservice: human-in-loop-browser-agent-backend\n\nprovider:\n  name: aws\n  runtime: python3.12\n  region: ${opt:region, \"us-east-1\"}\n  stage: ${opt:stage, \"dev\"}\n\n  # These env vars are exposed to the Lambda at runtime.\n  environment:\n    APPROVAL_TABLE_NAME: ${self:service}-${self:provider.stage}-approval-requests\n    UPLOAD_BUCKET_NAME: ${self:service}-${self:provider.stage}-${aws:accountId}-uploads\n\n  iam:\n    role:\n      statements:\n        # Read uploaded CSVs from the S3 bucket.\n        - Effect: Allow\n          Action:\n            - s3:GetObject\n          Resource: \"arn:aws:s3:::${self:provider.environment.UPLOAD_BUCKET_NAME}/*\"\n\n        # Write approval request items to DynamoDB.\n        - Effect: Allow\n          Action:\n            - dynamodb:PutItem\n          Resource: !GetAtt ApprovalRequestsTable.Arn\n\n        # Consume messages from the SQS upload queue.\n        - Effect: Allow\n          Action:\n            - sqs:ReceiveMessage\n            - sqs:DeleteMessage\n            - sqs:GetQueueAttributes\n          Resource: !GetAtt UploadQueue.Arn\n        # CloudWatch Logs permissions are added automatically by Serverless.\n\n# Keep the Lambda package small. Only ship the handler + src/.\npackage:\n  patterns:\n    - \"!**/__pycache__/**\"\n    - \"!**/.pytest_cache/**\"\n    - \"!.venv/**\"\n    - \"!venv/**\"\n    - \"!node_modules/**\"\n    - \"!README.md\"\n    - \"lambda_handler.py\"\n    - \"src/**\"\n\nfunctions:\n  processUpload:\n    handler: lambda_handler.process_upload\n    timeout: 60\n    memorySize: 256\n    events:\n      - sqs:\n          arn: !GetAtt UploadQueue.Arn\n          # batchSize: 1 keeps each S3 event in its own Lambda invocation,\n          # which makes debugging much easier for beginners.\n          batchSize: 1\n\nresources:\n  Resources:\n    # --- DynamoDB: approval requests table -----------------------------------\n    ApprovalRequestsTable:\n      Type: AWS::DynamoDB::Table\n      Properties:\n        TableName: ${self:provider.environment.APPROVAL_TABLE_NAME}\n        BillingMode: PAY_PER_REQUEST\n        AttributeDefinitions:\n          - AttributeName: request_id\n            AttributeType: S\n        KeySchema:\n          - AttributeName: request_id\n            KeyType: HASH\n\n    # --- SQS: upload queue ---------------------------------------------------\n    UploadQueue:\n      Type: AWS::SQS::Queue\n      Properties:\n        QueueName: ${self:service}-${self:provider.stage}-uploads\n        # VisibilityTimeout must be >= Lambda timeout (60s here).\n        VisibilityTimeout: 90\n\n    # --- SQS queue policy: allow our S3 bucket to send messages --------------\n    #\n    # We reference the bucket by its known *name* (not by !Ref UploadBucket).\n    # This breaks the circular dependency that would otherwise exist between\n    # the bucket and the queue policy.\n    UploadQueuePolicy:\n      Type: AWS::SQS::QueuePolicy\n      Properties:\n        Queues:\n          - !Ref UploadQueue\n        PolicyDocument:\n          Version: \"2012-10-17\"\n          Statement:\n            - Sid: AllowS3SendMessage\n              Effect: Allow\n              Principal:\n                Service: s3.amazonaws.com\n              Action: sqs:SendMessage\n              Resource: !GetAtt UploadQueue.Arn\n              Condition:\n                ArnLike:\n                  aws:SourceArn: \"arn:aws:s3:::${self:provider.environment.UPLOAD_BUCKET_NAME}\"\n\n    # --- S3: upload bucket with notification to SQS --------------------------\n    #\n    # DependsOn: UploadQueuePolicy ensures the queue accepts events from S3\n    # before the bucket exists (and therefore before S3 tries to publish).\n    UploadBucket:\n      Type: AWS::S3::Bucket\n      DependsOn: UploadQueuePolicy\n      Properties:\n        BucketName: ${self:provider.environment.UPLOAD_BUCKET_NAME}\n        NotificationConfiguration:\n          QueueConfigurations:\n            - Event: s3:ObjectCreated:*\n              Queue: !GetAtt UploadQueue.Arn\n              Filter:\n                S3Key:\n                  Rules:\n                    - Name: prefix\n                      Value: uploads/\n                    - Name: suffix\n                      Value: .csv\n\n  Outputs:\n    ApprovalRequestsTableName:\n      Description: \"DynamoDB table for approval requests (copy into root .env)\"\n      Value: ${self:provider.environment.APPROVAL_TABLE_NAME}\n    UploadBucketName:\n      Description: \"S3 bucket for CSV uploads (copy into root .env)\"\n      Value: ${self:provider.environment.UPLOAD_BUCKET_NAME}\n    UploadQueueUrl:\n      Description: \"SQS queue URL\"\n      Value: !Ref UploadQueue\n",
+    "command": [
+      "remove"
+    ],
+    "options": {},
+    "orgId": "ac0d5e90-2e17-49c8-8225-4712b6074493",
+    "orgName": "udemydemo",
+    "userId": "GyGJ8NXp0XMQNHpPZw",
+    "userName": "udemydemo",
+    "serviceProviderAwsAccountId": "063899249535",
+    "serviceProviderAwsCfStackName": "human-in-loop-browser-agent-backend-dev",
+    "serviceProviderAwsCfStackId": "arn:aws:cloudformation:us-east-1:063899249535:stack/human-in-loop-browser-agent-backend-dev/14cc58d0-58b4-11f1-8265-12b7a2040e37",
+    "serviceProviderAwsCfStackCreated": "2026-05-26T03:36:29.277Z",
+    "serviceProviderAwsCfStackUpdated": "2026-05-26T03:56:07.046Z",
+    "serviceProviderAwsCfStackStatus": "UPDATE_COMPLETE",
+    "serviceProviderAwsCfStackOutputs": [
+      {
+        "OutputKey": "ApprovalRequestsTableName",
+        "OutputValue": "human-in-loop-browser-agent-backend-dev-approval-requests",
+        "Description": "DynamoDB table for approval requests (copy into root .env)"
+      },
+      {
+        "OutputKey": "UploadQueueUrl",
+        "OutputValue": "https://sqs.us-east-1.amazonaws.com/063899249535/human-in-loop-browser-agent-backend-dev-uploads",
+        "Description": "SQS queue URL"
+      },
+      {
+        "OutputKey": "ServerlessDeploymentBucketName",
+        "OutputValue": "serverless-framework-deployments-us-east-1-72eeb60b-ccce",
+        "ExportName": "sls-human-in-loop-browser-agent-backend-dev-ServerlessDeploymentBucketName"
+      },
+      {
+        "OutputKey": "ProcessUploadLambdaFunctionQualifiedArn",
+        "OutputValue": "arn:aws:lambda:us-east-1:063899249535:function:human-in-loop-browser-agent-backend-dev-processUpload:2",
+        "Description": "Current Lambda function version",
+        "ExportName": "sls-human-in-loop-browser-agent-backend-dev-ProcessUploadLambdaFunctionQualifiedArn"
+      },
+      {
+        "OutputKey": "UploadBucketName",
+        "OutputValue": "human-in-loop-browser-agent-backend-dev-063899249535-uploads",
+        "Description": "S3 bucket for CSV uploads (copy into root .env)"
+      }
+    ]
+  }
+}

@@ -1,0 +1,162 @@
+# serverless.yml
+#
+# Deploys the cloud half of the human-in-the-loop browser agent:
+#   - DynamoDB table for approval requests
+#   - S3 bucket for CSV uploads
+#   - SQS queue that receives S3 ObjectCreated notifications
+#   - Lambda function (processUpload) triggered by SQS
+#
+# Flow:
+#   Streamlit upload -> S3 (uploads/*.csv) -> SQS -> Lambda
+#     -> reads CSV from S3 -> writes one DynamoDB approval request per valid row
+#
+# About the S3 -> SQS notification "circular dependency":
+#   The S3 bucket's NotificationConfiguration references the SQS queue, and the
+#   SQS queue policy needs to reference the bucket's ARN to allow it to send
+#   messages. CloudFormation refuses to deploy if both reference each other via
+#   logical IDs (a true cycle).
+#
+#   The clean fix is to NOT reference the bucket as a CloudFormation resource
+#   inside the queue policy - instead we build the bucket ARN as a STRING from
+#   the same deterministic name we use to create the bucket. The bucket then
+#   uses DependsOn to make sure the queue policy is created before it is, so by
+#   the time S3 publishes its first event the queue already accepts it.
+
+service: human-in-loop-browser-agent-backend
+
+provider:
+  name: aws
+  runtime: python3.12
+  region: ${opt:region, "us-east-1"}
+  stage: ${opt:stage, "dev"}
+
+  # These env vars are exposed to the Lambda at runtime.
+  environment:
+    APPROVAL_TABLE_NAME: ${self:service}-${self:provider.stage}-approval-requests
+    UPLOAD_BUCKET_NAME: ${self:service}-${self:provider.stage}-${aws:accountId}-uploads
+
+  iam:
+    role:
+      statements:
+        # Read uploaded CSVs from the S3 bucket.
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+          Resource: "arn:aws:s3:::${self:provider.environment.UPLOAD_BUCKET_NAME}/*"
+
+        # Write approval request items to DynamoDB.
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+          Resource: !GetAtt ApprovalRequestsTable.Arn
+
+        # Consume messages from the SQS upload queue.
+        - Effect: Allow
+          Action:
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+          Resource: !GetAtt UploadQueue.Arn
+        # CloudWatch Logs permissions are added automatically by Serverless.
+
+# Keep the Lambda package small. Only ship the handler + src/.
+package:
+  patterns:
+    - "!**/__pycache__/**"
+    - "!**/.pytest_cache/**"
+    - "!.venv/**"
+    - "!venv/**"
+    - "!node_modules/**"
+    - "!README.md"
+    - "lambda_handler.py"
+    - "src/**"
+
+functions:
+  processUpload:
+    handler: lambda_handler.process_upload
+    timeout: 60
+    memorySize: 256
+    events:
+      - sqs:
+          arn: !GetAtt UploadQueue.Arn
+          # batchSize: 1 keeps each S3 event in its own Lambda invocation,
+          # which makes debugging much easier for beginners.
+          batchSize: 1
+
+resources:
+  Resources:
+    # --- DynamoDB: approval requests table -----------------------------------
+    ApprovalRequestsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.APPROVAL_TABLE_NAME}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: request_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: request_id
+            KeyType: HASH
+
+    # --- SQS: upload queue ---------------------------------------------------
+    UploadQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-uploads
+        # VisibilityTimeout must be >= Lambda timeout (60s here).
+        VisibilityTimeout: 90
+
+    # --- SQS queue policy: allow our S3 bucket to send messages --------------
+    #
+    # We reference the bucket by its known *name* (not by !Ref UploadBucket).
+    # This breaks the circular dependency that would otherwise exist between
+    # the bucket and the queue policy.
+    UploadQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref UploadQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Sid: AllowS3SendMessage
+              Effect: Allow
+              Principal:
+                Service: s3.amazonaws.com
+              Action: sqs:SendMessage
+              Resource: !GetAtt UploadQueue.Arn
+              Condition:
+                ArnLike:
+                  aws:SourceArn: "arn:aws:s3:::${self:provider.environment.UPLOAD_BUCKET_NAME}"
+
+    # --- S3: upload bucket with notification to SQS --------------------------
+    #
+    # DependsOn: UploadQueuePolicy ensures the queue accepts events from S3
+    # before the bucket exists (and therefore before S3 tries to publish).
+    UploadBucket:
+      Type: AWS::S3::Bucket
+      DependsOn: UploadQueuePolicy
+      Properties:
+        BucketName: ${self:provider.environment.UPLOAD_BUCKET_NAME}
+        NotificationConfiguration:
+          QueueConfigurations:
+            - Event: s3:ObjectCreated:*
+              Queue: !GetAtt UploadQueue.Arn
+              Filter:
+                S3Key:
+                  Rules:
+                    - Name: prefix
+                      Value: uploads/
+                    - Name: suffix
+                      Value: .csv
+
+  Outputs:
+    ApprovalRequestsTableName:
+      Description: "DynamoDB table for approval requests (copy into root .env)"
+      Value: ${self:provider.environment.APPROVAL_TABLE_NAME}
+    UploadBucketName:
+      Description: "S3 bucket for CSV uploads (copy into root .env)"
+      Value: ${self:provider.environment.UPLOAD_BUCKET_NAME}
+    UploadQueueUrl:
+      Description: "SQS queue URL"
+      Value: !Ref UploadQueue

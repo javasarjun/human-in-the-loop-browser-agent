@@ -3,42 +3,61 @@ app.py
 
 The Streamlit control center for the human-in-the-loop browser agent.
 
-Flow:
-  1. User types a natural language pizza order.
-  2. We call the LLM to extract structured form fields.
-  3. We save those fields as a 'pending' approval request in DynamoDB.
-  4. The pending list shows each request with Approve / Reject buttons.
-  5. On Approve, we call the submitter, which drives Playwright and verifies the result.
-  6. The UI re-reads DynamoDB and shows the new status.
+Two ways to create approval requests live in this UI:
+
+  A. Natural language flow (local + OpenAI):
+       User types a request -> LLM extracts a pizza order -> DynamoDB pending.
+
+  B. CSV upload flow (cloud):
+       User uploads a CSV -> S3 (uploads/) -> S3 event -> SQS -> Lambda
+       -> Lambda creates one DynamoDB pending request per valid row.
+
+Both flows surface in the same Pending Approvals dashboard, where you can
+approve or reject and (for the natural-language flow) immediately submit
+via the local Playwright browser agent.
 
 Run with:
   streamlit run app.py
 """
 
 import json
+import os
 
 import streamlit as st
 
 import dynamodb_service
 import llm_service
-import processing_service
 import submitter_service
 import upload_service
 
 # ---- Page setup ----------------------------------------------------------------
 
 st.set_page_config(page_title="Human-in-the-Loop Browser Agent", layout="wide")
+
+# When STREAMLIT_APP_PASSWORD is set (it is, in the App Runner deployment),
+# gate the whole page behind a single shared password. Locally the env var is
+# unset, so this block is a no-op.
+_app_password = os.getenv("STREAMLIT_APP_PASSWORD", "")
+if _app_password and not st.session_state.get("authed"):
+    st.title("Sign in")
+    entered = st.text_input("Password", type="password")
+    if entered:
+        if entered == _app_password:
+            st.session_state["authed"] = True
+            st.rerun()
+        st.error("Wrong password.")
+    st.stop()
+
 st.title("Human-in-the-Loop Browser Agent")
 st.caption(
-    "Natural language -> LLM-parsed pizza order -> your approval -> Playwright submits the form."
+    "Natural language or CSV upload -> human approval -> local Playwright submission."
 )
 
-# Make sure both DynamoDB tables exist. Safe to call on every run.
-try:
-    dynamodb_service.ensure_table_exists()
-    dynamodb_service.ensure_uploads_table_exists()
-except Exception as exc:
-    st.warning(f"Could not verify DynamoDB tables: {exc}")
+# The approval requests table is managed by the Serverless stack in backend/.
+# Local dev with a hand-rolled table can call dynamodb_service.ensure_table_exists()
+# directly from a REPL; we don't do it on every page load any more, partly because
+# it requires the dynamodb:ListTables permission which the deployed IAM user
+# doesn't need to have.
 
 DEFAULT_REQUEST = (
     "Can you order a small vegetarian pizza with onion, mushroom for Arjun Vaid around 8:30 PM? "
@@ -46,7 +65,7 @@ DEFAULT_REQUEST = (
     "Please add a note asking for extra cheese, but don't submit until I approve."
 )
 
-# ---- Section 1: Create Approval Request ----------------------------------------
+# ---- Section 1: Create Approval Request (natural language) --------------------
 
 st.header("Create Approval Request")
 
@@ -89,9 +108,7 @@ if st.button("Create Approval Request", type="primary"):
                         payload=payload,
                         review_summary=review_summary,
                     )
-                    st.success(
-                        f"Saved as pending approval request: {item['request_id']}"
-                    )
+                    st.success(f"Saved as pending approval request: {item['request_id']}")
                 except Exception as exc:
                     st.error(f"Could not save to DynamoDB: {exc}")
 
@@ -115,15 +132,21 @@ for req in pending:
         st.markdown(f"**Summary:** {req.get('review_summary', '')}")
         st.markdown(f"**Created:** {req.get('created_at', '')}")
 
+        # Surface batch metadata when the request came from an S3/CSV upload.
+        if req.get("source"):
+            st.markdown(
+                f"**Source:** `{req['source']}`  ·  **File:** `{req.get('source_file', '')}`"
+                f"  ·  **Row:** {req.get('row_number', '')}"
+            )
+
         with st.expander("Original natural language request"):
-            st.write(req.get("original_request", ""))
+            st.write(req.get("original_request", "(not applicable - CSV row)"))
 
         with st.expander("Parsed payload"):
             st.json(req.get("payload", {}))
 
         col_approve, col_reject = st.columns(2)
 
-        # Approve button: mark approved, then run the submitter inline.
         if col_approve.button("Approve & Submit", key=f"approve-{request_id}"):
             try:
                 dynamodb_service.approve_request(request_id)
@@ -140,7 +163,6 @@ for req in pending:
                 st.json(result)
                 st.rerun()
 
-        # Reject button: just mark rejected and refresh.
         if col_reject.button("Reject", key=f"reject-{request_id}"):
             try:
                 dynamodb_service.reject_request(request_id)
@@ -149,150 +171,54 @@ for req in pending:
             except Exception as exc:
                 st.error(f"Could not reject: {exc}")
 
-# ---- Section 3: Upload CSV / Excel File ---------------------------------------
+# ---- Section 3: Upload CSV to S3 ----------------------------------------------
 
-st.header("Upload CSV / Excel File")
+st.header("Upload CSV to S3")
 st.caption(
-    "Upload a .csv or .xlsx file. For now we just store it locally and show a preview. "
-    "Row processing and approval requests will be added in the next lecture."
+    "Upload a .csv with columns: custname, custemail, custtel, size, delivery "
+    "(optional: topping, comments). The S3 ObjectCreated event triggers SQS -> "
+    "Lambda, which creates one pending approval request per valid row. Watch "
+    "this section's pending list refresh after a few seconds."
 )
 
+if not upload_service.UPLOAD_BUCKET_NAME:
+    st.warning(
+        "UPLOAD_BUCKET_NAME is not set in .env. Deploy the backend "
+        "(see backend/README.md) and copy the bucket name into your .env."
+    )
+
 uploaded_file = st.file_uploader(
-    "Choose a file to upload",
-    type=["csv", "xlsx"],
+    "Choose a CSV file",
+    type=["csv"],
     accept_multiple_files=False,
     key="file_uploader",
 )
 
 if uploaded_file is not None:
-    # Only save when the user clicks the button - otherwise Streamlit would
-    # re-save the same file on every rerun (e.g. each time another button is clicked).
-    if st.button("Save uploaded file", key="save_upload_btn"):
-        record = upload_service.save_uploaded_file(uploaded_file)
-        if record["upload_status"] == "uploaded":
-            st.success(
-                "File uploaded successfully. "
-                "Processing will be added in the next lecture."
+    # Only upload when the user clicks the button - otherwise Streamlit would
+    # re-upload the same file on every rerun.
+    if st.button("Upload to S3", key="upload_btn"):
+        with st.spinner("Uploading to S3..."):
+            result = upload_service.save_uploaded_file(uploaded_file)
+        if result["success"]:
+            st.success(f"Uploaded to s3://{result['bucket']}/{result['s3_key']}")
+            st.info(
+                "The Lambda processor will create pending approval requests "
+                "shortly. Click rerun (or interact with the page) to refresh."
             )
-            st.json(record)
+            st.json(result)
         else:
-            st.error(f"Upload failed: {record.get('error_message', 'Unknown error')}")
+            st.error(f"Upload failed: {result.get('error_message', 'Unknown error')}")
 
-# Show the full list of previously uploaded files.
-st.subheader("Uploaded Files")
-
-upload_records = upload_service.load_upload_metadata()
-if not upload_records:
-    st.caption("No files uploaded yet.")
+# Show a small list of recent S3 uploads so you can confirm the upload landed.
+st.subheader("Recent S3 Uploads")
+recent_uploads = upload_service.list_recent_uploads(limit=10)
+if not recent_uploads:
+    st.caption("No uploads found in S3 yet (or S3 access not configured).")
 else:
-    # Newest first.
-    upload_records_sorted = sorted(
-        upload_records, key=lambda r: r.get("uploaded_at", ""), reverse=True
-    )
+    st.dataframe(recent_uploads, use_container_width=True)
 
-    # Compact table view of the columns the lecture asked for.
-    table_rows = [
-        {
-            "upload_id": r.get("upload_id", "")[:8] + "...",
-            "file_name": r.get("original_file_name", ""),
-            "status": r.get("upload_status", ""),
-            "uploaded_at": r.get("uploaded_at", ""),
-        }
-        for r in upload_records_sorted
-    ]
-    st.dataframe(table_rows, use_container_width=True)
-
-    # Let the user pick one upload to preview.
-    successful_uploads = [r for r in upload_records_sorted if r.get("upload_status") == "uploaded"]
-    if successful_uploads:
-        options = {
-            f"{r['original_file_name']}  ({r['upload_id'][:8]})": r for r in successful_uploads
-        }
-        choice = st.selectbox(
-            "Preview an uploaded file (first 5 rows)",
-            options=list(options.keys()),
-            key="preview_select",
-        )
-        if choice:
-            selected = options[choice]
-            try:
-                preview_df = upload_service.preview_uploaded_file(
-                    selected["stored_file_path"],
-                    selected["file_type"],
-                    n=5,
-                )
-                st.dataframe(preview_df, use_container_width=True)
-            except Exception as exc:
-                st.error(f"Could not preview file: {exc}")
-
-# ---- Section 4: Process Uploaded Files ----------------------------------------
-
-st.header("Process Uploaded Files")
-st.caption(
-    "For each uploaded file, validate its rows and create one pending approval "
-    "request per valid row. Required columns: "
-    f"{', '.join(processing_service.REQUIRED_COLUMNS)}. "
-    "Optional columns: topping, comments."
-)
-
-# Re-read upload metadata so this section reflects the latest statuses.
-uploads_for_processing = upload_service.load_upload_metadata()
-
-if not uploads_for_processing:
-    st.caption("No uploaded files yet. Upload one in the section above.")
-
-for record in uploads_for_processing:
-    upload_id = record["upload_id"]
-    status = record.get("upload_status", "")
-    file_name = record.get("original_file_name", "")
-
-    with st.container(border=True):
-        cols = st.columns([3, 1, 1, 2])
-        cols[0].markdown(f"**{file_name}**  \n`{upload_id}`")
-        cols[1].markdown(f"**Status:** `{status}`")
-        cols[2].markdown(f"**Type:** {record.get('file_type', '')}")
-        cols[3].markdown(f"**Uploaded:** {record.get('uploaded_at', '')}")
-
-        if status == "uploaded":
-            if st.button("Process File", key=f"process-{upload_id}"):
-                with st.spinner(f"Processing {file_name}..."):
-                    result = processing_service.process_upload(record)
-
-                if result.get("already_processed"):
-                    st.warning(
-                        f"This file is already in status '{result['final_status']}'. "
-                        "Skipping to avoid duplicate processing."
-                    )
-                elif result["final_status"] == "failed":
-                    st.error(
-                        f"File processing failed: {result.get('file_error', 'unknown error')}"
-                    )
-                else:
-                    st.success(
-                        f"Processed {file_name}. "
-                        f"batch_id = {result['batch_id']}"
-                    )
-
-                # Always show the summary so the user can see what happened.
-                summary_cols = st.columns(3)
-                summary_cols[0].metric("Total rows", result["total_rows"])
-                summary_cols[1].metric("Requests created", result["requests_created"])
-                summary_cols[2].metric("Rows skipped", result["rows_skipped"])
-
-                if result["errors"]:
-                    st.warning(f"{len(result['errors'])} row(s) had errors:")
-                    st.dataframe(result["errors"], use_container_width=True)
-
-                st.rerun()
-
-        elif status == "processed":
-            st.info("Already processed. Re-processing is disabled.")
-        elif status == "processing":
-            st.info("Currently processing (or interrupted mid-run).")
-        elif status == "failed":
-            st.error(f"Previous attempt failed: {record.get('error_message', '')}")
-
-# ---- Section 5: Recent History -------------------------------------------------
+# ---- Section 4: Recent History -------------------------------------------------
 
 st.header("Recent Requests (all statuses)")
 
@@ -302,7 +228,6 @@ except Exception as exc:
     st.error(f"Could not load history: {exc}")
     history = []
 
-# Build a small table-friendly view.
 if history:
     rows = []
     for r in history:
@@ -310,6 +235,7 @@ if history:
             {
                 "request_id": r.get("request_id", "")[:8] + "...",
                 "status": r.get("status", ""),
+                "source": r.get("source", ""),
                 "summary": r.get("review_summary", ""),
                 "created_at": r.get("created_at", ""),
                 "updated_at": r.get("updated_at", ""),

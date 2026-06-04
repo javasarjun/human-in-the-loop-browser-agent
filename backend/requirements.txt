@@ -1,0 +1,7 @@
+# Backend Python dependencies.
+#
+# At runtime, AWS Lambda already provides boto3 (and botocore) in its Python
+# image, so the deployment package does not need to bundle them. This file
+# exists so you can install the same libraries locally if you want to run or
+# unit-test the Lambda code outside of AWS.
+boto3>=1.34.0

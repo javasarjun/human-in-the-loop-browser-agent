@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(./venv/bin/python -m py_compile app.py llm_service.py dynamodb_service.py browser_agent.py submitter_service.py main.py upload_service.py processing_service.py)"
+      "Bash(./venv/bin/python -m py_compile app.py llm_service.py dynamodb_service.py browser_agent.py submitter_service.py main.py upload_service.py processing_service.py)",
+      "Bash(aws s3 *)",
+      "Bash(./venv/bin/python -m py_compile backend/lambda_handler.py backend/src/csv_processor.py backend/src/dynamodb_writer.py backend/src/utils.py app.py)",
+      "Bash(./venv/bin/python -m py_compile deploy/cleanup.py)",
+      "Bash(./venv/bin/python deploy/cleanup.py --dry-run --yes)",
+      "Bash(./venv/bin/python -m py_compile deploy/setup.py deploy/cleanup.py)",
+      "Bash(./venv/bin/python deploy/setup.py --help)"
     ]
   }
 }

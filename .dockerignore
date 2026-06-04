@@ -1,0 +1,31 @@
+# Don't ship the local dev environment into the image.
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Secrets and local config never go in the image - App Runner injects env vars.
+.env
+.env.*
+!.env-example
+
+# Git and editor noise.
+.git/
+.gitignore
+.claude/
+.vscode/
+.idea/
+
+# Backend (Lambda code is deployed separately via Serverless Framework).
+backend/
+
+# Local-only files.
+uploads/
+sample_files/
+pizza_orders.csv
+prompt.txt
+
+# Build artifacts and docs.
+deploy/
+README.md
+*.md

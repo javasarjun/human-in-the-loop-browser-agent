@@ -1,0 +1,540 @@
+{
+  "service": {
+    "service": "human-in-loop-browser-agent-backend",
+    "serviceObject": {
+      "name": "human-in-loop-browser-agent-backend"
+    },
+    "provider": {
+      "name": "aws",
+      "runtime": "python3.12",
+      "region": "us-east-1",
+      "stage": "dev",
+      "environment": {
+        "APPROVAL_TABLE_NAME": "human-in-loop-browser-agent-backend-dev-approval-requests",
+        "UPLOAD_BUCKET_NAME": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+      },
+      "iam": {
+        "role": {
+          "statements": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject"
+              ],
+              "Resource": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads/*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:PutItem"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "ApprovalRequestsTable",
+                  "Arn"
+                ]
+              }
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes"
+              ],
+              "Resource": {
+                "Fn::GetAtt": [
+                  "UploadQueue",
+                  "Arn"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "versionFunctions": true,
+      "compiledCloudFormationTemplate": {
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Description": "The AWS CloudFormation template for this Serverless application",
+        "Resources": {
+          "ProcessUploadLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/human-in-loop-browser-agent-backend-dev-processUpload"
+            }
+          },
+          "IamRoleLambdaExecution": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": [
+                        "lambda.amazonaws.com"
+                      ]
+                    },
+                    "Action": [
+                      "sts:AssumeRole"
+                    ]
+                  }
+                ]
+              },
+              "Policies": [
+                {
+                  "PolicyName": {
+                    "Fn::Join": [
+                      "-",
+                      [
+                        "human-in-loop-browser-agent-backend",
+                        "dev",
+                        "lambda"
+                      ]
+                    ]
+                  },
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "logs:CreateLogStream",
+                          "logs:CreateLogGroup",
+                          "logs:TagResource"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/human-in-loop-browser-agent-backend-dev*:*"
+                          }
+                        ]
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "logs:PutLogEvents"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/human-in-loop-browser-agent-backend-dev*:*:*"
+                          }
+                        ]
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iam\"][\"role\"][\"statements\"][0]"
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iam\"][\"role\"][\"statements\"][1]"
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iam\"][\"role\"][\"statements\"][2]"
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "sqs:ReceiveMessage",
+                          "sqs:DeleteMessage",
+                          "sqs:GetQueueAttributes"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::GetAtt": [
+                              "UploadQueue",
+                              "Arn"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Path": "/",
+              "RoleName": {
+                "Fn::Join": [
+                  "-",
+                  [
+                    "human-in-loop-browser-agent-backend",
+                    "dev",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    "lambdaRole"
+                  ]
+                ]
+              }
+            }
+          },
+          "ProcessUploadLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "serverless-framework-deployments-us-east-1-72eeb60b-ccce",
+                "S3Key": "serverless/human-in-loop-browser-agent-backend/dev/1779767763689-2026-05-26T03:56:03.689Z/human-in-loop-browser-agent-backend.zip"
+              },
+              "Handler": "lambda_handler.process_upload",
+              "Runtime": "python3.12",
+              "FunctionName": "human-in-loop-browser-agent-backend-dev-processUpload",
+              "MemorySize": 256,
+              "Timeout": 60,
+              "Environment": {
+                "Variables": {
+                  "APPROVAL_TABLE_NAME": "human-in-loop-browser-agent-backend-dev-approval-requests",
+                  "UPLOAD_BUCKET_NAME": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "ProcessUploadLogGroup"
+            ]
+          },
+          "ProcessUploadLambdaVersionymAliHSxY9XIEMNSeBY3kgWbdr3YOpIaohvvAAJ22s": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "ProcessUploadLambdaFunction"
+              },
+              "CodeSha256": "DUPdvWqqbw2zSA+E+CWl0jax6bgZj2MJ87twWVM5OiM="
+            }
+          },
+          "ProcessUploadEventSourceMappingSQSUploadQueue": {
+            "Type": "AWS::Lambda::EventSourceMapping",
+            "DependsOn": [
+              "IamRoleLambdaExecution"
+            ],
+            "Properties": {
+              "BatchSize": 1,
+              "EventSourceArn": {
+                "Fn::GetAtt": [
+                  "UploadQueue",
+                  "Arn"
+                ]
+              },
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "ProcessUploadLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Enabled": true
+            }
+          },
+          "ApprovalRequestsTable": {
+            "Type": "AWS::DynamoDB::Table",
+            "Properties": {
+              "TableName": "human-in-loop-browser-agent-backend-dev-approval-requests",
+              "BillingMode": "PAY_PER_REQUEST",
+              "AttributeDefinitions": [
+                {
+                  "AttributeName": "request_id",
+                  "AttributeType": "S"
+                }
+              ],
+              "KeySchema": [
+                {
+                  "AttributeName": "request_id",
+                  "KeyType": "HASH"
+                }
+              ]
+            }
+          },
+          "UploadQueue": {
+            "Type": "AWS::SQS::Queue",
+            "Properties": {
+              "QueueName": "human-in-loop-browser-agent-backend-dev-uploads",
+              "VisibilityTimeout": 90
+            }
+          },
+          "UploadQueuePolicy": {
+            "Type": "AWS::SQS::QueuePolicy",
+            "Properties": {
+              "Queues": [
+                {
+                  "Ref": "UploadQueue"
+                }
+              ],
+              "PolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Sid": "AllowS3SendMessage",
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": "s3.amazonaws.com"
+                    },
+                    "Action": "sqs:SendMessage",
+                    "Resource": {
+                      "Fn::GetAtt": [
+                        "UploadQueue",
+                        "Arn"
+                      ]
+                    },
+                    "Condition": {
+                      "ArnLike": {
+                        "aws:SourceArn": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "UploadBucket": {
+            "Type": "AWS::S3::Bucket",
+            "DependsOn": [
+              "UploadQueuePolicy"
+            ],
+            "Properties": {
+              "BucketName": "human-in-loop-browser-agent-backend-dev-063899249535-uploads",
+              "NotificationConfiguration": {
+                "QueueConfigurations": [
+                  {
+                    "Event": "s3:ObjectCreated:*",
+                    "Queue": {
+                      "Fn::GetAtt": [
+                        "UploadQueue",
+                        "Arn"
+                      ]
+                    },
+                    "Filter": {
+                      "S3Key": {
+                        "Rules": [
+                          {
+                            "Name": "prefix",
+                            "Value": "uploads/"
+                          },
+                          {
+                            "Name": "suffix",
+                            "Value": ".csv"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "Outputs": {
+          "ServerlessDeploymentBucketName": {
+            "Value": "serverless-framework-deployments-us-east-1-72eeb60b-ccce",
+            "Export": {
+              "Name": "sls-human-in-loop-browser-agent-backend-dev-ServerlessDeploymentBucketName"
+            }
+          },
+          "ProcessUploadLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "ProcessUploadLambdaVersionymAliHSxY9XIEMNSeBY3kgWbdr3YOpIaohvvAAJ22s"
+            },
+            "Export": {
+              "Name": "sls-human-in-loop-browser-agent-backend-dev-ProcessUploadLambdaFunctionQualifiedArn"
+            }
+          },
+          "ApprovalRequestsTableName": {
+            "Description": "DynamoDB table for approval requests (copy into root .env)",
+            "Value": "human-in-loop-browser-agent-backend-dev-approval-requests"
+          },
+          "UploadBucketName": {
+            "Description": "S3 bucket for CSV uploads (copy into root .env)",
+            "Value": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+          },
+          "UploadQueueUrl": {
+            "Description": "SQS queue URL",
+            "Value": {
+              "Ref": "UploadQueue"
+            }
+          }
+        }
+      },
+      "vpc": {}
+    },
+    "pluginsData": {},
+    "functions": {
+      "processUpload": {
+        "handler": "lambda_handler.process_upload",
+        "timeout": 60,
+        "memorySize": 256,
+        "events": [
+          {
+            "sqs": {
+              "arn": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"IamRoleLambdaExecution\"][\"Properties\"][\"Policies\"][0][\"PolicyDocument\"][\"Statement\"][5][\"Resource\"][0]"
+              },
+              "batchSize": 1
+            }
+          }
+        ],
+        "name": "human-in-loop-browser-agent-backend-dev-processUpload",
+        "package": {},
+        "memory": 256,
+        "runtime": "python3.12",
+        "vpc": {},
+        "versionLogicalId": "ProcessUploadLambdaVersionymAliHSxY9XIEMNSeBY3kgWbdr3YOpIaohvvAAJ22s"
+      }
+    },
+    "resources": {
+      "Resources": {
+        "ApprovalRequestsTable": {
+          "Type": "AWS::DynamoDB::Table",
+          "Properties": {
+            "TableName": "human-in-loop-browser-agent-backend-dev-approval-requests",
+            "BillingMode": "PAY_PER_REQUEST",
+            "AttributeDefinitions": [
+              {
+                "AttributeName": "request_id",
+                "AttributeType": "S"
+              }
+            ],
+            "KeySchema": [
+              {
+                "AttributeName": "request_id",
+                "KeyType": "HASH"
+              }
+            ]
+          }
+        },
+        "UploadQueue": {
+          "Type": "AWS::SQS::Queue",
+          "Properties": {
+            "QueueName": "human-in-loop-browser-agent-backend-dev-uploads",
+            "VisibilityTimeout": 90
+          }
+        },
+        "UploadQueuePolicy": {
+          "Type": "AWS::SQS::QueuePolicy",
+          "Properties": {
+            "Queues": [
+              {
+                "Ref": "UploadQueue"
+              }
+            ],
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "AllowS3SendMessage",
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "s3.amazonaws.com"
+                  },
+                  "Action": "sqs:SendMessage",
+                  "Resource": {
+                    "Fn::GetAtt": [
+                      "UploadQueue",
+                      "Arn"
+                    ]
+                  },
+                  "Condition": {
+                    "ArnLike": {
+                      "aws:SourceArn": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "UploadBucket": {
+          "Type": "AWS::S3::Bucket",
+          "DependsOn": [
+            "UploadQueuePolicy"
+          ],
+          "Properties": {
+            "BucketName": "human-in-loop-browser-agent-backend-dev-063899249535-uploads",
+            "NotificationConfiguration": {
+              "QueueConfigurations": [
+                {
+                  "Event": "s3:ObjectCreated:*",
+                  "Queue": {
+                    "Fn::GetAtt": [
+                      "UploadQueue",
+                      "Arn"
+                    ]
+                  },
+                  "Filter": {
+                    "S3Key": {
+                      "Rules": [
+                        {
+                          "Name": "prefix",
+                          "Value": "uploads/"
+                        },
+                        {
+                          "Name": "suffix",
+                          "Value": ".csv"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "Outputs": {
+        "ApprovalRequestsTableName": {
+          "Description": "DynamoDB table for approval requests (copy into root .env)",
+          "Value": "human-in-loop-browser-agent-backend-dev-approval-requests"
+        },
+        "UploadBucketName": {
+          "Description": "S3 bucket for CSV uploads (copy into root .env)",
+          "Value": "human-in-loop-browser-agent-backend-dev-063899249535-uploads"
+        },
+        "UploadQueueUrl": {
+          "Description": "SQS queue URL",
+          "Value": {
+            "Ref": "UploadQueue"
+          }
+        }
+      }
+    },
+    "configValidationMode": "warn",
+    "serviceFilename": "serverless",
+    "initialServerlessConfig": {
+      "service": "human-in-loop-browser-agent-backend",
+      "provider": {
+        "$ref": "$[\"service\"][\"provider\"]"
+      },
+      "package": {
+        "patterns": [
+          "!**/__pycache__/**",
+          "!**/.pytest_cache/**",
+          "!.venv/**",
+          "!venv/**",
+          "!node_modules/**",
+          "!README.md",
+          "lambda_handler.py",
+          "src/**"
+        ],
+        "artifactsS3KeyDirname": "serverless/human-in-loop-browser-agent-backend/dev/code-artifacts",
+        "deploymentBucket": "serverless-framework-deployments-us-east-1-72eeb60b-ccce",
+        "artifact": "/Users/arjunvaid/human-in-loop-browser-agent/backend/.serverless/human-in-loop-browser-agent-backend.zip",
+        "artifactDirectoryName": "serverless/human-in-loop-browser-agent-backend/dev/1779767763689-2026-05-26T03:56:03.689Z"
+      },
+      "functions": {
+        "$ref": "$[\"service\"][\"functions\"]"
+      },
+      "resources": {
+        "$ref": "$[\"service\"][\"resources\"]"
+      }
+    },
+    "appId": null,
+    "orgId": null,
+    "layers": {},
+    "artifact": "/Users/arjunvaid/human-in-loop-browser-agent/backend/.serverless/human-in-loop-browser-agent-backend.zip"
+  },
+  "package": {
+    "artifactDirectoryName": "serverless/human-in-loop-browser-agent-backend/dev/1779767763689-2026-05-26T03:56:03.689Z",
+    "artifact": "human-in-loop-browser-agent-backend.zip"
+  }
+}

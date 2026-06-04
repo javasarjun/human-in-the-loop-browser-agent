@@ -1,0 +1,209 @@
+Refactor my current HUMAN-IN-LOOP-BROWSER-AGENT project.
+
+Here is my current root structure:
+- app.py
+- browser_agent.py
+- dynamodb_service.py
+- llm_service.py
+- main.py
+- processing_service.py
+- submitter_service.py
+- upload_service.py
+- requirements.txt
+- README.md
+- .env
+- .env-example
+- .gitignore
+- prompt.txt
+- pizza_orders.csv
+- uploads/
+- venv/
+
+Goal:
+Separate the deployable AWS backend components into a new backend/ directory while keeping the local Streamlit UI and Playwright browser execution in the root project.
+
+Important architecture:
+- Root project remains the local application.
+- backend/ contains the Serverless Framework deployment.
+- Streamlit uploads CSV files to S3.
+- Streamlit does NOT send SQS messages manually.
+- S3 ObjectCreated event sends notification to SQS.
+- Lambda is triggered by SQS.
+- Lambda reads the S3 event notification from the SQS message body.
+- Lambda downloads the CSV from S3.
+- Lambda processes the CSV rows.
+- Lambda creates approval request records in DynamoDB.
+- Browser submission remains local through submitter_service.py and browser_agent.py.
+
+Please refactor into this target structure:
+
+HUMAN-IN-LOOP-BROWSER-AGENT/
+├── app.py
+├── browser_agent.py
+├── dynamodb_service.py
+├── llm_service.py
+├── main.py
+├── processing_service.py
+├── submitter_service.py
+├── upload_service.py
+├── requirements.txt
+├── README.md
+├── .env-example
+├── .gitignore
+├── prompt.txt
+├── uploads/
+├── sample_files/
+│   └── sample_upload.csv
+│
+└── backend/
+    ├── serverless.yml
+    ├── lambda_handler.py
+    ├── requirements.txt
+    ├── README.md
+    └── src/
+        ├── __init__.py
+        ├── csv_processor.py
+        ├── dynamodb_writer.py
+        └── utils.py
+
+Root project responsibilities:
+
+1. app.py
+   - Streamlit approval dashboard.
+   - Show pending approval requests from DynamoDB.
+   - Allow approve/reject.
+   - Include CSV upload UI.
+   - Upload CSV file to S3 using upload_service.py.
+   - Do NOT send SQS messages manually.
+
+2. upload_service.py
+   - Uploads file to S3 only.
+   - Uses UPLOAD_BUCKET_NAME from .env.
+   - Does not use SQS.
+   - Generates S3 key like: uploads/YYYYMMDD-HHMMSS-filename.csv
+
+3. processing_service.py
+   - Keep this for local processing mode only.
+   - It can still process CSV files locally and create DynamoDB requests.
+   - Do not use this in Lambda.
+
+4. dynamodb_service.py
+   - Used by local Streamlit UI and local submitter.
+   - Reads and updates DynamoDB approval requests.
+   - Uses DYNAMODB_TABLE_NAME from .env.
+
+5. submitter_service.py
+   - Local process for now.
+   - Reads approved requests from DynamoDB.
+   - Uses browser_agent.py to submit approved form requests.
+   - Marks requests submitted or failed.
+
+Backend responsibilities:
+
+1. backend/serverless.yml
+   - Deploy S3 bucket.
+   - Deploy SQS queue.
+   - Configure S3 ObjectCreated notification to SQS for: prefix uploads/, suffix .csv
+   - Add SQS queue policy allowing S3 to send messages.
+   - Deploy Lambda processor triggered by SQS.
+   - Deploy DynamoDB approval requests table.
+   - Add IAM permissions for Lambda:
+     s3:GetObject, dynamodb:PutItem,
+     sqs:ReceiveMessage, sqs:DeleteMessage, sqs:GetQueueAttributes,
+     CloudWatch logs
+
+2. backend/lambda_handler.py
+   - Lambda entry point: process_upload(event, context)
+   - Receives SQS event.
+   - Each SQS record body contains S3 event notification JSON.
+   - Parse bucket and key from:
+     message_body["Records"][0]["s3"]["bucket"]["name"]
+     message_body["Records"][0]["s3"]["object"]["key"]
+   - Decode object key using urllib.parse.unquote_plus.
+   - Ignore unsupported files that are not .csv.
+   - Download CSV from S3.
+   - Use backend/src/csv_processor.py to process rows.
+   - Use backend/src/dynamodb_writer.py to create DynamoDB approval requests.
+
+3. backend/src/csv_processor.py
+   - Read CSV content.
+   - Validate required columns: custname, custemail, custtel, size, delivery (required); topping, comments (optional). Valid sizes: small/medium/large.
+   - Return valid rows with row_number.
+   - Skip invalid rows but log them.
+
+4. backend/src/dynamodb_writer.py
+   - Create approval request items in DynamoDB.
+   - Fields: request_id, status, task_type, source, source_file, row_number, payload, review_summary, created_at, updated_at, error_message
+   - status should start as pending.
+   - source should be s3_upload.
+   - task_type should be demo_form_submission.
+
+5. backend/src/utils.py
+   - now_iso()
+   - generate_request_id()
+   - any shared helpers.
+
+Serverless Framework requirements:
+- Use Python 3.12.
+- Default stage: dev.
+- Default region: us-east-1.
+- Service name: human-in-loop-browser-agent-backend
+- DynamoDB table: partition key request_id (string), BillingMode PAY_PER_REQUEST
+- Lambda: processUpload, handler lambda_handler.process_upload, triggered by SQS, batchSize 1
+
+provider environment must include:
+- APPROVAL_TABLE_NAME
+- UPLOAD_BUCKET_NAME
+
+S3 -> SQS notification:
+If direct S3 notification configuration in CloudFormation creates circular dependencies, use a clean beginner-friendly workaround and explain it in comments. The standard fix is to reference the bucket by its deterministic name string (not !Ref) in the queue policy, and have the bucket DependsOn the queue policy.
+
+Local .env-example should include:
+OPENAI_API_KEY=your_openai_key_here
+AWS_REGION=us-east-1
+DYNAMODB_TABLE_NAME=human-in-loop-browser-agent-backend-dev-approval-requests
+UPLOAD_BUCKET_NAME=human-in-loop-browser-agent-backend-dev-youraccountid-uploads
+
+Backend does not need OPENAI_API_KEY. Lambda only processes CSV and writes DynamoDB approval requests.
+
+Create sample_files/sample_upload.csv with:
+custname,custemail,custtel,size,topping,delivery,comments
+Arjun Vaid,javasarjun@gmail.com,4694268163,small,bacon,20:30,add more cheese
+Sarah Lee,sarah@example.com,5551112222,medium,cheese,19:00,ring the doorbell
+John Smith,john@example.com,5553334444,large,mushroom,18:45,leave at front desk
+
+Update README.md to explain local development:
+1. Create virtual environment.
+2. Install root requirements.
+3. Set .env.
+4. Run Streamlit: streamlit run app.py
+5. Upload CSV from UI.
+6. Review pending approvals.
+7. Run submitter: python submitter_service.py
+
+Update backend/README.md to explain deployment:
+1. cd backend
+2. npm install -g serverless
+3. serverless deploy
+4. serverless info
+5. Copy deployed DynamoDB table name and S3 bucket name into root .env.
+6. Run Streamlit from root and upload sample CSV.
+
+Safety rules:
+- Do not submit forms from Lambda.
+- Lambda only creates approval requests.
+- Browser submission remains local through submitter_service.py for now.
+- Do not bypass CAPTCHA or bot protection.
+- Do not use real personal data.
+- Keep code beginner friendly and well commented.
+
+Please perform the refactor carefully.
+Do not delete existing functionality.
+Where possible, move code instead of duplicating it.
+
+After refactor, provide:
+1. Final folder structure.
+2. Commands to run locally.
+3. Commands to deploy backend.
+4. What environment variables are needed.
+5. A short explanation of the S3 → SQS → Lambda → DynamoDB flow.

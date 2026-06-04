@@ -1,0 +1,51 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ApprovalTableAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Scan"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:063899249535:table/human-in-loop-browser-agent-backend-dev-approval-requests"
+    },
+    {
+      "Sid": "UploadBucketWrite",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads/uploads/*"
+    },
+    {
+      "Sid": "UploadBucketList",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::human-in-loop-browser-agent-backend-dev-063899249535-uploads",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "uploads/*"
+        }
+      }
+    },
+    {
+      "Sid": "OpenAISecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-1:063899249535:secret:human-in-loop-browser-agent/openai-api-key-*"
+    },
+    {
+  "Sid": "AllowListTables",
+  "Effect": "Allow",
+  "Action": "dynamodb:ListTables",
+  "Resource": "*"
+}
+  ]
+}
