@@ -74,15 +74,6 @@ aws iam put-user-policy \
 aws iam create-access-key --user-name "$IAM_USER"
 
 ```
-{
-    "AccessKey": {
-        "UserName": "human-in-loop-browser-agent-runtime",
-        "AccessKeyId": "REDACTED_AWS_ACCESS_KEY_ID",
-        "Status": "Active",
-        "SecretAccessKey": "REDACTED_AWS_SECRET_ACCESS_KEY",
-        "CreateDate": "2026-05-26T16:46:25+00:00"
-    }
-}
 
 Capture the `AccessKeyId` and `SecretAccessKey` from the output. You won't see
 the secret again.

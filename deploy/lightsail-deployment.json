@@ -8,9 +8,9 @@
         "DYNAMODB_TABLE_NAME": "human-in-loop-browser-agent-backend-dev-approval-requests",
         "UPLOAD_BUCKET_NAME": "human-in-loop-browser-agent-backend-dev-063899249535-uploads",
         "STREAMLIT_APP_PASSWORD": "admin123456",
-        "OPENAI_API_KEY":"REDACTED_OPENAI_KEY",
-        "AWS_ACCESS_KEY_ID": "REDACTED_AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY": "REDACTED_AWS_SECRET_ACCESS_KEY"
+        "OPENAI_API_KEY":"*",
+        "AWS_ACCESS_KEY_ID": "*",
+        "AWS_SECRET_ACCESS_KEY": "*"
       }
     }
   },
