@@ -1,1 +1,21 @@
 .env
+.env.*
+!.env-example
+
+# Local Lightsail deployment spec (contains secrets - never commit).
+deploy/lightsail-deployment.json
+
+# Python / venv / caches
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Local editor / tooling state
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Local upload spool (no longer used by the S3 path)
+uploads/
