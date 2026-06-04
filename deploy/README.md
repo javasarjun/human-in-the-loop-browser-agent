@@ -75,9 +75,6 @@ aws iam create-access-key --user-name "$IAM_USER"
 
 ```
 
-Capture the `AccessKeyId` and `SecretAccessKey` from the output. You won't see
-the secret again.
-
 ### 2. Create the Lightsail container service
 
 ```bash
